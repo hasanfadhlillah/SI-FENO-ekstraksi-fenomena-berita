@@ -2,6 +2,7 @@
 import json
 import time
 import requests
+import openai  # Pindahkan ke atas agar fail-fast jika belum terinstall
 from groq import Groq
 from google import genai as google_genai
 from google.genai import types as google_types
@@ -17,19 +18,19 @@ MODEL_STACK = [
     {
         "nama"      : "Google — Gemini 2.5 Flash",
         "provider"  : "gemini",
-        "model_id"  : "gemini-2.5-flash",          # ✅ stable alias, selalu terbaru
+        "model_id"  : "gemini-2.5-flash",          # stable alias, selalu terbaru
         "max_chars" : 10000,
     },
     {
         "nama"      : "Cerebras — GPT-OSS 120B",
         "provider"  : "cerebras",
-        "model_id"  : "gpt-oss-120b",              # ✅ pengganti Qwen3-32B, lebih pintar
+        "model_id"  : "gpt-oss-120b",              # open-weight reasoning model by OpenAI
         "max_chars" : 4000,
     },
     {
         "nama"      : "Google — Gemini 2.5 Flash-Lite",
         "provider"  : "gemini",
-        "model_id"  : "gemini-2.5-flash-lite",     # ✅ stable alias
+        "model_id"  : "gemini-2.5-flash-lite",     # stable alias
         "max_chars" : 10000,
     },
     {
@@ -59,21 +60,21 @@ def _buat_prompt(data_artikel: dict, max_chars: int) -> str:
         Tanggal Web: {data_artikel['tanggal']}
         
         Teks Artikel:
-        {data_artikel['teks'][:12000]}
+        {teks}
         
         EKSTRAK KE DALAM JSON DENGAN 12 KEY WAJIB BERIKUT:
         1. "tema_topik": Kategori utama (misal Inflasi, Pertanian, Bencana Alam, Pariwisata, Kemiskinan, Ketenagakerjaan, dsb).
         2. "judul_dan_tanggal": Kombinasi judul asli berita dan tanggal publish.
         3. "sumber_dan_link": Nama media massa dan URL berita lengkap.
-        4. "ringkasan_fenomena": rangkuman/ringkasan/penjelasan 4-5 Kalimat tentang penyebab kejadian, perubahan data angka, persentase, angka-angka penting (misal jumlah lokasi/daerah yang terdampak, jumlah yang diopimalkan, dan sejenisnya), dan lain-lainya + beserta alasannya (pastikan dalam ringkasan sudah termasuk ada pernyataan narasumber yang diubah ke kalimat tidak langsung).
+        4. "ringkasan_fenomena": rangkuman/ringkasan/penjelasan 4-5 Kalimat tentang penyebab kejadian, perubahan data angka, persentase, angka-angka penting (misal jumlah lokasi/daerah yang terdampak, jumlah yang dioptimalkan, dan sejenisnya), dan lain-lainya + beserta alasannya (pastikan dalam ringkasan sudah termasuk ada pernyataan narasumber yang diubah ke kalimat tidak langsung).
         5. "data_angka": Ekstraksi nilai kuantitatif spesifik (misal harga, persentase %, ton, jumlah korban/hektar, dan lain-lainnya) yang disebutkan.
-        6. "kutipan_tokoh": Sebutkan semua pernyataan/statement/kata-kata resmi pejabat/tokoh/narasumber di dalam berita beserta nama dan jabatannya (biasanya ditandai dengan tanda kutip, ... ujarnya, ... ungkapnya, ... katanya, ... ungkap beliau, ungkap [nama narasumber/tokoh/pejanat], atau yang lain-lainnya).
+        6. "kutipan_tokoh": Sebutkan semua pernyataan/statement/kata-kata resmi pejabat/tokoh/narasumber di dalam berita beserta nama dan jabatannya (biasanya ditandai dengan tanda kutip, ... ujarnya, ... ungkapnya, ... katanya, ... ungkap beliau, ungkap [nama narasumber/tokoh/pejabat], atau yang lain-lainnya).
         7. "lokasi_spesifik": Fokus area kejadian, misal nama kecamatan, pasar, atau desa, atau yang lainnya di Magelang.
-        8. "indikator_bps": Mapping otomatis ke jenis survei BPS (IHK, NTP, PDRB, Sakernas, atau Susenas).
-        9. "intervensi_pemerintah": Sebutkan semua tindakan/aksi/kebijakan yang diambil oleh pemerintah yang disebutkan untuk merespons fenomena tersebut (misal operasi pasar, bantuan, dan lain-lainnya).
-        10. "periode_kejadian": Kapan peristiwa tersebut terjadi, Rentang waktu riil peristiwa terjadi, terlepas dari tanggal berita rilis (misal tahun/bulan/minggu ke berapa).
-        11. "kata_kunci": 3-5 hashtags untuk mempermudah pencarian (contoh: #Beras #GagalPanen).
-        12. "sentimen_dampak": Pilih salah satu: Positif / Negatif / Netral.
+        8. "intervensi_pemerintah": Sebutkan semua tindakan/aksi/kebijakan yang diambil oleh pemerintah yang disebutkan untuk merespons fenomena tersebut (misal operasi pasar, bantuan, dan lain-lainnya).
+        9. "periode_kejadian": Kapan peristiwa tersebut terjadi, Rentang waktu riil peristiwa terjadi, terlepas dari tanggal berita rilis (misal tahun/bulan/minggu ke berapa).
+        10. "kata_kunci": 3-5 hashtags untuk mempermudah pencarian (contoh: #Beras #GagalPanen).
+        11. "sentimen_dampak": Pilih salah satu: Positif / Negatif / Netral.
+        12. "kategori_perbandingan": Analisis narasi dan kutipan narasumber di dalam teks untuk menentukan satu perbandingan fenomena secara eksklusif, lalu pilih "y-on-y" (jika dibandingkan dengan tahun sebelumnya), "q-to-q" (kuartal/bulan sebelumnya), "harga" (fluktuasi harian/mingguan), atau "Tidak ada informasi" (jika tidak ada perbandingan waktu sama sekali).
         
         ATURAN:
         a. Jika data benar-benar tidak ada di teks, isi dengan "Tidak ada informasi".
@@ -108,15 +109,14 @@ def _call_gemini(api_key: str, model_id: str, prompt: str) -> str:
             temperature=0.1,
             max_output_tokens=2000,
             response_mime_type="application/json",
+            # Matikan thinking config untuk respon yang lebih stabil jika didukung
             thinking_config=google_types.ThinkingConfig(thinking_budget=0)
-            # thinking_budget=0 = matikan thinking → lebih cepat + hemat token
         )
     )
     return resp.text
 
 # ─── Caller: Cerebras (OpenAI-compatible) ──────────────────────────────────────
 def _call_cerebras(api_key: str, model_id: str, prompt: str) -> str:
-    import openai
     client = openai.OpenAI(
         api_key=api_key,
         base_url="https://api.cerebras.ai/v1"
@@ -161,8 +161,10 @@ def ekstrak_fenomena_ai(keys: dict, data_artikel: dict) -> dict:
             else:
                 continue
 
-            # Bersihkan jika ada sisa markdown (jaga-jaga)
-            teks_bersih = teks_json.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            # PERBAIKAN: Bersihkan sisa markdown JSON yang jauh lebih aman dari lstrip
+            teks_bersih = teks_json.strip()
+            teks_bersih = teks_bersih.replace('```json', '').replace('```', '').strip()
+            
             hasil = json.loads(teks_bersih)
             hasil["_model_digunakan"] = cfg["nama"]
             print(f"   -> [✅ Sukses] {cfg['nama']}")

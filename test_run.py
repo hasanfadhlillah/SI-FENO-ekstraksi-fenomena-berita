@@ -13,7 +13,11 @@ KEYS = {
     "cerebras": os.environ.get("CEREBRAS_API_KEY", ""),
 }
 
-LINK_BERITA = "https://www.kabarku.net/kabar-jawa-tengah/13916966424/hingga-awal-april-2026-realisasi-produksi-padi-jateng-capai-416-juta-ton"
+# Cek apakah file .env sudah ada isinya (Opsional)
+if not any(KEYS.values()):
+    print("⚠️  Peringatan: Tidak ada API Key yang ditemukan di file .env!")
+
+LINK_BERITA = "https://radarmagelang.jawapos.com/magelang/687213386/hingga-pertengahan-februari-2026-serapan-gabah-bulog-magelang-capai-4500-ton"
 
 def main():
     print("=" * 60)

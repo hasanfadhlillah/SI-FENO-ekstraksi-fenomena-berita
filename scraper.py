@@ -1,11 +1,12 @@
 # File: scraper.py
 import requests
 from html.parser import HTMLParser
+import re
 
 # ─── Detektor Cloudflare ───────────────────────────────────────────────────────
 CLOUDFLARE_TITLES = [
     "attention required", "just a moment",
-    "checking your browser", "enable javascript", "403 forbidden"
+    "checking your browser", "enable javascript", "403 forbidden", "cloudflare"
 ]
 
 def _is_cloudflare_block(judul: str, teks: str) -> bool:
@@ -15,7 +16,7 @@ def _is_cloudflare_block(judul: str, teks: str) -> bool:
     return (
         any(kw in j for kw in CLOUDFLARE_TITLES) or
         ("ray id" in t and "cloudflare" in t) or
-        len(teks) < 500  # Teks terlalu pendek = bukan artikel
+        len(teks) < 300  # Teks terlalu pendek = kemungkinan bukan artikel
     )
 
 # ─── Ekstraktor HTML Sederhana (tanpa library tambahan) ───────────────────────
@@ -24,7 +25,7 @@ class _HTMLTextExtractor(HTMLParser):
         super().__init__()
         self.teks = []
         self._skip = False
-        self._skip_tags = {'script', 'style', 'nav', 'footer', 'head', 'noscript'}
+        self._skip_tags = {'script', 'style', 'nav', 'footer', 'head', 'noscript', 'aside', 'header'}
 
     def handle_starttag(self, tag, attrs):
         if tag in self._skip_tags:
@@ -79,12 +80,13 @@ def _metode_direct(url: str) -> dict | None:
         if resp.status_code != 200:
             return None
         teks = _html_ke_teks(resp.text)
+        
         # Ambil judul dari tag <title>
         judul = ""
-        if "<title>" in resp.text:
-            start = resp.text.find("<title>") + 7
-            end = resp.text.find("</title>", start)
-            judul = resp.text[start:end].strip()
+        match = re.search(r'<title[^>]*>(.*?)</title>', resp.text, re.IGNORECASE | re.DOTALL)
+        if match:
+            judul = match.group(1).strip()
+            
         return {"judul": judul, "teks": teks}
     except Exception:
         return None
@@ -113,6 +115,9 @@ def scrape_berita(url: str) -> dict:
     Scraper berlapis 3:
     Jina Reader → Direct Request → Google Cache
     """
+    # PERBAIKAN PENTING: Bersihkan URL dari pelacak (?utm_source=...) agar tidak dicurigai bot
+    clean_url = url.split('?')[0]
+    
     metode_list = [
         ("Jina Reader API",   _metode_jina),
         ("Direct Request",    _metode_direct),
@@ -121,7 +126,9 @@ def scrape_berita(url: str) -> dict:
 
     for nama_metode, fungsi in metode_list:
         print(f"   -> [Mencoba] {nama_metode}...")
-        hasil = fungsi(url)
+        
+        # Gunakan clean_url yang sudah bersih dari pelacak
+        hasil = fungsi(clean_url)
 
         if hasil is None:
             print(f"   -> [Gagal] {nama_metode}: Tidak ada respons.")
@@ -143,7 +150,7 @@ def scrape_berita(url: str) -> dict:
         return {
             "status":  "sukses",
             "metode":  nama_metode,
-            "url":     url,
+            "url":     clean_url, # Simpan URL bersih di database BPS
             "judul":   judul or "Judul diekstrak AI",
             "tanggal": "Diekstrak otomatis oleh AI",
             "teks":    teks
