@@ -8,5 +8,5 @@ streamlit>=1.30.0
 pandas>=2.0.0
 
 # SI-FENO RADAR
-duckduckgo-search>=6.0.0   # DDG News + Web
-feedparser>=6.0.0          # Parse Google News RSS
+ddgs>=0.5.0
+feedparser>=6.0.0
