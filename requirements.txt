@@ -1,3 +1,4 @@
+# SI-FENO Core
 groq>=0.9.0
 google-genai>=1.0.0
 openai>=1.0.0
@@ -5,3 +6,7 @@ requests>=2.31.0
 python-dotenv>=1.0.0
 streamlit>=1.30.0
 pandas>=2.0.0
+
+# SI-FENO RADAR
+duckduckgo-search>=6.0.0   # DDG News + Web
+feedparser>=6.0.0          # Parse Google News RSS
