@@ -11,7 +11,7 @@ KATEGORI_TEST    = "Tanaman Pangan"      # Ganti untuk test kategori lain
 TANGGAL_MULAI    = "2026-01-01"
 TANGGAL_SELESAI  = "2026-03-31"
 MIN_SKOR         = 6
-PAKSA_PROSES_ULANG = False               # Ubah ke True jika ingin memaksa AI membaca ulang artikel yang pernah gagal
+PAKSA_PROSES_ULANG = True               # Ubah ke True jika ingin memaksa AI membaca ulang artikel yang pernah gagal
 
 # Daftar kategori untuk batch test (subset kecil)
 BATCH_TEST = [
