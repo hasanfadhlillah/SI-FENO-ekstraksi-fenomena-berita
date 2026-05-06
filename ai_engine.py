@@ -1,11 +1,11 @@
 # File: ai_engine.py
 import json
 import time
-import requests
-import openai  # Pindahkan ke atas agar fail-fast jika belum terinstall
+import openai
 from groq import Groq
 from google import genai as google_genai
 from google.genai import types as google_types
+from mistralai import Mistral
 
 # ─── KONFIGURASI MODEL STACK ────────────────────────────────────────────────────
 MODEL_STACK = [
@@ -16,21 +16,27 @@ MODEL_STACK = [
         "max_chars" : 8000,
     },
     {
+        "nama"      : "Cerebras — Llama 3.3 70B",
+        "provider"  : "cerebras",
+        "model_id"  : "llama-3.3-70b",             # Otak sama, beda server (Bonus 1M Token/hari)
+        "max_chars" : 8000,
+    },
+    {
         "nama"      : "Google — Gemini 2.5 Flash",
         "provider"  : "gemini",
-        "model_id"  : "gemini-2.5-flash",          # stable alias, selalu terbaru
+        "model_id"  : "gemini-2.5-flash",          
         "max_chars" : 10000,
     },
     {
-        "nama"      : "Cerebras — GPT-OSS 120B",
-        "provider"  : "cerebras",
-        "model_id"  : "gpt-oss-120b",              # open-weight reasoning model by OpenAI
-        "max_chars" : 4000,
+        "nama"      : "Mistral — Mistral Small",
+        "provider"  : "mistral",
+        "model_id"  : "mistral-small-latest",       
+        "max_chars" : 8000,
     },
     {
         "nama"      : "Google — Gemini 2.5 Flash-Lite",
         "provider"  : "gemini",
-        "model_id"  : "gemini-2.5-flash-lite",     # stable alias
+        "model_id"  : "gemini-2.5-flash-lite",     
         "max_chars" : 10000,
     },
     {
@@ -49,15 +55,19 @@ MODEL_STACK = [
 
 # ─── Buat Prompt ────────────────────────────────────────────────────────────────
 def _buat_prompt(data_artikel: dict, max_chars: int) -> str:
-    teks = data_artikel['teks'][:max_chars]
+    teks = data_artikel.get('teks', '')[:max_chars]
+    url = data_artikel.get('url_asli', data_artikel.get('url', '-'))
+    judul = data_artikel.get('judul', 'Judul Tidak Diketahui')
+    tanggal = data_artikel.get('tanggal', 'Tanggal Tidak Diketahui')
+    
     return f"""
         Anda adalah Analis Data Ahli yang Handal dan Professional di Badan Pusat Statistik (BPS) Kota Magelang.
         Tugas Anda adalah menganalisis teks artikel berita dan mengekstrak fenomena yang relevan untuk data statistik DENGAN SUPER LENGKAP, SUPER DETAIL, DAN SUPER TEPAT DAN BENAR TANPA ADA YANG TERTINGGAL.
         
         Data Artikel Sumber:
-        URL: {data_artikel['url']}
-        Judul Web: {data_artikel['judul']}
-        Tanggal Web: {data_artikel['tanggal']}
+        URL: {url}
+        Judul Web: {judul}
+        Tanggal Web: {tanggal}
         
         Teks Artikel:
         {teks}
@@ -98,8 +108,8 @@ def _call_groq(api_key: str, model_id: str, prompt: str) -> str:
     u = resp.usage
     print(f"   -> [Token] in:{u.prompt_tokens} out:{u.completion_tokens} total:{u.total_tokens}")
     return resp.choices[0].message.content
-
-# ─── Caller: Gemini (pakai SDK resmi, bukan REST manual) ───────────────────────
+ 
+# ─── Caller: Gemini ─────────────────────────────────────────────────────────────
 def _call_gemini(api_key: str, model_id: str, prompt: str) -> str:
     client = google_genai.Client(api_key=api_key)
     resp = client.models.generate_content(
@@ -109,12 +119,14 @@ def _call_gemini(api_key: str, model_id: str, prompt: str) -> str:
             temperature=0.1,
             max_output_tokens=2000,
             response_mime_type="application/json",
-            # Matikan thinking config untuk respon yang lebih stabil jika didukung
             thinking_config=google_types.ThinkingConfig(thinking_budget=0)
         )
     )
-    return resp.text
-
+    teks = resp.text if resp.text is not None else ""
+    if not teks.strip():
+        raise ValueError("Gemini mengembalikan respons kosong")
+    return teks
+ 
 # ─── Caller: Cerebras (OpenAI-compatible) ──────────────────────────────────────
 def _call_cerebras(api_key: str, model_id: str, prompt: str) -> str:
     client = openai.OpenAI(
@@ -131,26 +143,52 @@ def _call_cerebras(api_key: str, model_id: str, prompt: str) -> str:
         max_tokens=2000,
         response_format={"type": "json_object"}
     )
-    return resp.choices[0].message.content
-
+    teks = resp.choices[0].message.content
+    if teks is None or not teks.strip():
+        raise ValueError("Cerebras mengembalikan respons kosong")
+    return teks
+ 
+# ─── Caller: Mistral ─────────────────────────────────────────────────────────────
+def _call_mistral(api_key: str, model_id: str, prompt: str) -> str:
+    client = Mistral(api_key=api_key)
+    resp = client.chat.complete(
+        model=model_id,
+        messages=[
+            {"role": "system", "content": "Kamu analis data BPS. Balas HANYA JSON murni yang valid."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.1,
+        max_tokens=2000,
+        response_format={"type": "json_object"}
+    )
+    teks = resp.choices[0].message.content
+    if teks is None or not teks.strip():
+        raise ValueError("Mistral mengembalikan respons kosong")
+    return teks
+ 
 # ─── Fungsi Utama ───────────────────────────────────────────────────────────────
 def ekstrak_fenomena_ai(keys: dict, data_artikel: dict) -> dict:
     """
-    Stacking 6 model dari 3 provider.
-    Auto-fallback jika rate limit atau model error.
-    keys = {"groq": "gsk_...", "gemini": "AIza...", "cerebras": "csk_..."}
+    Stacking 7 model dari 4 provider dengan auto-fallback.
+    
+    keys = {
+        "groq"     : "gsk_...",
+        "gemini"   : "AIza...",
+        "cerebras" : "csk_...",
+        "mistral"  : "..."       ← BARU
+    }
     """
     for cfg in MODEL_STACK:
         provider = cfg["provider"]
         api_key  = keys.get(provider, "").strip()
-
+ 
         if not api_key or api_key.startswith("GANTI"):
             print(f"   -> [Skip] {cfg['nama']}: API key belum diisi.")
             continue
-
+ 
         print(f"\n   -> [Mencoba] {cfg['nama']}...")
         prompt = _buat_prompt(data_artikel, cfg["max_chars"])
-
+ 
         try:
             if provider == "groq":
                 teks_json = _call_groq(api_key, cfg["model_id"], prompt)
@@ -158,32 +196,33 @@ def ekstrak_fenomena_ai(keys: dict, data_artikel: dict) -> dict:
                 teks_json = _call_gemini(api_key, cfg["model_id"], prompt)
             elif provider == "cerebras":
                 teks_json = _call_cerebras(api_key, cfg["model_id"], prompt)
+            elif provider == "mistral":
+                teks_json = _call_mistral(api_key, cfg["model_id"], prompt)
             else:
                 continue
-
-            # PERBAIKAN: Bersihkan sisa markdown JSON yang jauh lebih aman dari lstrip
-            teks_bersih = teks_json.strip()
-            teks_bersih = teks_bersih.replace('```json', '').replace('```', '').strip()
-            
+ 
+            # Bersihkan sisa markdown jika ada
+            teks_bersih = teks_json.strip().replace('```json', '').replace('```', '').strip()
+ 
             hasil = json.loads(teks_bersih)
             hasil["_model_digunakan"] = cfg["nama"]
             print(f"   -> [✅ Sukses] {cfg['nama']}")
             return {"status": "sukses", "data": hasil}
-
+ 
         except json.JSONDecodeError as e:
             print(f"   -> [Error JSON] {cfg['nama']}: {e}")
             continue
-
+ 
         except Exception as e:
             err = str(e)
-            is_rate_limit = any(k in err for k in [
-                "429", "rate_limit", "quota", "RESOURCE_EXHAUSTED",
-                "Too Many Requests", "token", "RPM", "RPD"
+            is_rate_limit = any(k in err.lower() for k in [
+                "429", "rate_limit", "rate limit", "quota", "resource_exhausted",
+                "too many requests", "token", "rpm", "rpd", "exhausted"
             ])
-            is_not_found = any(k in err for k in [
+            is_not_found = any(k in err.lower() for k in [
                 "404", "not found", "does not exist", "model_not_found"
             ])
-
+ 
             if is_rate_limit:
                 print(f"   -> [⚠️  Rate Limit] {cfg['nama']} → lanjut model berikutnya...")
                 time.sleep(1)
@@ -192,8 +231,8 @@ def ekstrak_fenomena_ai(keys: dict, data_artikel: dict) -> dict:
             else:
                 print(f"   -> [Error] {cfg['nama']}: {err[:120]}")
             continue
-
+ 
     return {
         "status": "error",
-        "pesan": "Semua model habis quota atau error. Coba lagi nanti!"
+        "pesan" : "Semua model habis quota atau error. Coba lagi nanti!"
     }
