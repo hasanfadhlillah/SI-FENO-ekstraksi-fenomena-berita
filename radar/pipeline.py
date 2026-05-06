@@ -20,13 +20,14 @@ from .fallback       import (URUTAN_FALLBACK, dapatkan_level_fallback_berikutnya
 # Di bagian ATAS file pipeline.py
 load_dotenv()
 
-GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+GROQ_KEY     = os.environ.get("GROQ_API_KEY", "")
+GEMINI_KEY   = os.environ.get("GEMINI_API_KEY", "")
+CEREBRAS_KEY = os.environ.get("CEREBRAS_API_KEY", "")
 
-# Gabungkan key untuk dikirim ke screener
 API_KEYS_DICT = {
-    "groq": GROQ_KEY,
-    "gemini": GEMINI_KEY
+    "groq"    : GROQ_KEY,
+    "gemini"  : GEMINI_KEY,
+    "cerebras": CEREBRAS_KEY,
 }
 
 # ─── Helper ────────────────────────────────────────────────────────────────────

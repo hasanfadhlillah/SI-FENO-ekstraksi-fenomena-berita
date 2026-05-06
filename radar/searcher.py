@@ -122,28 +122,28 @@ def _deduplikasi(list_artikel: list[dict]) -> list[dict]:
 
 
 def _buang_homepage(list_artikel: list[dict]) -> list[dict]:
-    """
-    Filter tambahan: buang URL yang kemungkinan besar homepage portal,
-    bukan artikel spesifik. Artikel spesifik biasanya punya path yang panjang.
-    Contoh homepage: https://antaranews.com (path kosong / sangat pendek)
-    Contoh artikel:  https://antaranews.com/berita/123456/judul-berita
-    """
+    """Filter homepage + URL Google News yang belum ter-resolve."""
     hasil = []
     for item in list_artikel:
         url = item.get("url", "")
         if not url:
             continue
+
+        # ─── PERBAIKAN: Buang URL Google News yang belum ter-resolve ───
+        if "news.google.com" in url:
+            print(f"      [Filter] Buang URL Google belum ter-resolve: {url[:60]}")
+            continue
+
         try:
             from urllib.parse import urlparse
             parsed = urlparse(url)
-            path = parsed.path.strip("/")
-            # Artikel biasanya punya path dengan minimal 10 karakter
+            path   = parsed.path.strip("/")
             if len(path) >= 10:
                 hasil.append(item)
             else:
                 print(f"      [Filter] Buang homepage: {url}")
         except Exception:
-            hasil.append(item)  # Jika gagal parse, loloskan saja
+            hasil.append(item)
     return hasil
 
 

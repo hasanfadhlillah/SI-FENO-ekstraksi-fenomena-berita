@@ -7,12 +7,12 @@ Dilengkapi dengan Auto-Fallback Model Stack untuk mencegah limit kuota.
 
 import json
 import time
+import openai
 from groq import Groq
 from google import genai as google_genai
 from google.genai import types as google_types
 
-# ─── KONFIGURASI MODEL STACK KHUSUS SCREENER ──────────────────────────────────
-# Urutan prioritas: Kepintaran (70B) -> Kuota Besar (Gemini) -> Darurat (8B)
+# ─── KONFIGURASI MODEL STACK ──────────────────────────────────────────────────
 SCREENER_STACK = [
     {
         "nama": "Groq — Llama 3.3 70B",
@@ -23,6 +23,11 @@ SCREENER_STACK = [
         "nama": "Google — Gemini 2.5 Flash",
         "provider": "gemini",
         "model_id": "gemini-2.5-flash"
+    },
+    {
+        "nama": "Cerebras — GPT-OSS 120B",   # ← TAMBAH INI: 1M token/hari gratis
+        "provider": "cerebras",
+        "model_id": "gpt-oss-120b"
     },
     {
         "nama": "Groq — Llama 3.1 8B Instant",
@@ -82,6 +87,26 @@ def _call_ai_screening(api_keys: dict, prompt: str) -> tuple[str, str]:
                 if teks.strip() == "":
                     raise ValueError("Gemini mengembalikan respons kosong")
                 return teks, cfg["nama"]
+            
+            elif provider == "cerebras":
+                client = openai.OpenAI(
+                    api_key=api_key,
+                    base_url="https://api.cerebras.ai/v1"
+                )
+                resp = client.chat.completions.create(
+                    model=model_id,
+                    messages=[
+                        {"role": "system", "content": "Validator berita BPS. Balas HANYA JSON murni tanpa markdown."},
+                        {"role": "user",   "content": prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=400,
+                    response_format={"type": "json_object"}
+                )
+                teks = resp.choices[0].message.content
+                if teks is None or teks.strip() == "":
+                    raise ValueError("Cerebras mengembalikan respons kosong")
+                return teks, cfg["nama"]
 
         except Exception as e:
             err = str(e).lower()
@@ -105,90 +130,79 @@ def _call_ai_screening(api_keys: dict, prompt: str) -> tuple[str, str]:
 
 def screening_satu_artikel(api_keys: dict, artikel: dict, nama_kategori: str, wilayah: str) -> dict:
     """
-    Screening satu artikel menggunakan AI Stack.
-    DIPERBAIKI:
-    - Logika tampilan_wilayah yang benar
-    - Aturan relevansi wilayah adaptif per level fallback
-    - layak_ekstrak lebih fleksibel di level fallback tinggi
+    Screening satu artikel.
+    KONSEP BARU: Berita dari wilayah MANAPUN bisa lolos, asal fenomenanya
+    relevan/berdampak pada kondisi ekonomi Kota Magelang.
     """
     teks_pendek = artikel.get("teks", "")[:3000]
-    judul = artikel.get("judul", "")
-    url   = artikel.get("url_asli", artikel.get("url", ""))
+    judul       = artikel.get("judul", "")
+    url         = artikel.get("url_asli", artikel.get("url", ""))
 
-    # ─── PERBAIKAN BUG 1: Cek dengan 'in' bukan '==' ─────────────────────────
+    # Tentukan konteks wilayah untuk prompt
     wilayah_lower = wilayah.lower()
     if "kota magelang" in wilayah_lower:
-        tampilan_wilayah = "KOTA MAGELANG"
-        level_ketat = True   # Level 1 → paling ketat
+        konteks = "Sedang mencari berita untuk level KOTA MAGELANG (pencarian pertama/utama)."
     elif "kabupaten magelang" in wilayah_lower:
-        tampilan_wilayah = "KABUPATEN MAGELANG"
-        level_ketat = True
+        konteks = "Sedang mencari berita untuk level KABUPATEN MAGELANG (fallback level 2)."
     elif "kedu" in wilayah_lower:
-        tampilan_wilayah = "EKS-KARESIDENAN KEDU (Magelang, Temanggung, Wonosobo, Purworejo)"
-        level_ketat = False  # Level 3+ → mulai longgarkan wilayah
+        konteks = "Sedang mencari berita untuk level EKS-KARESIDENAN KEDU (fallback level 3)."
     elif "jawa tengah" in wilayah_lower or "jateng" in wilayah_lower:
-        tampilan_wilayah = "PROVINSI JAWA TENGAH"
-        level_ketat = False
+        konteks = "Sedang mencari berita untuk level PROVINSI JAWA TENGAH (fallback level 4)."
     else:
-        tampilan_wilayah = "NASIONAL / INDONESIA"
-        level_ketat = False  # Level 5 → paling longgar
+        konteks = "Sedang mencari berita untuk level NASIONAL/INDONESIA (fallback level 5, kriteria paling longgar)."
 
-    # ─── PERBAIKAN BUG 2 & 3: Aturan wilayah adaptif per level ──────────────
-    if level_ketat:
-        aturan_wilayah = f"""ATURAN KETAT WILAYAH:
-Karena target adalah "{tampilan_wilayah}", artikel HARUS membahas wilayah tersebut secara eksplisit.
-Jika artikel membahas wilayah lain (misal Kabupaten saat target Kota, atau provinsi lain), 
-set "relevan_dengan_wilayah": false dan skor MAKSIMAL 4.
-"layak_ekstrak": true HANYA jika skor>=6 DAN SEMUA 4 boolean bernilai true."""
-    else:
-        aturan_wilayah = f"""ATURAN LONGGAR WILAYAH:
-Karena ini mode fallback wilayah "{tampilan_wilayah}", kriteria wilayah DIPERLONGGAR.
-Artikel tetap relevan jika membahas wilayah tersebut ATAU wilayah yang lebih kecil di dalamnya.
-Fokus utama adalah KUALITAS DATA dan RELEVANSI KATEGORI, bukan ketepatan wilayah.
-"relevan_dengan_wilayah": true jika artikel membahas wilayah ini ATAU sub-wilayahnya.
-"layak_ekstrak": true jika skor>=6 DAN minimal 3 dari 4 boolean bernilai true."""
+    prompt = f"""Kamu adalah validator berita untuk BPS KOTA MAGELANG, Jawa Tengah, Indonesia.
 
-    prompt = f"""Kamu adalah validator berita statistik BPS Indonesia.
-Baca cepat artikel ini dan nilai relevansinya berdasarkan parameter berikut:
+TUGAS UTAMA: Nilai apakah artikel berita ini mengandung FENOMENA STATISTIK yang RELEVAN untuk data PDRB Kota Magelang.
 
-Target Kategori PDRB: "{nama_kategori}"
-Target Wilayah: "{tampilan_wilayah}"
+Kategori PDRB yang dicari: "{nama_kategori}"
+{konteks}
 
 JUDUL: {judul}
 URL: {url}
-TEKS (penggalan):
+TEKS ARTIKEL:
 {teks_pendek}
 
-Balas HANYA dengan JSON ini:
+FILOSOFI PENILAIAN (SANGAT PENTING):
+Berita TIDAK HARUS secara eksplisit menyebut "Kota Magelang".
+Berita dari wilayah manapun (Kabupaten Magelang, Jawa Tengah, Nasional) TETAP RELEVAN jika:
+- Fenomenanya (harga, produksi, stok) BERDAMPAK atau MENCERMINKAN kondisi di Kota Magelang
+- Contoh LOLOS: "Harga beras Jateng naik 15%" → berdampak ke Kota Magelang
+- Contoh LOLOS: "Panen padi Kabupaten Magelang surplus" → mencerminkan kondisi wilayah
+- Contoh LOLOS: "Sidak Bulog Magelang, stok aman" → langsung menyebut Magelang
+- Contoh TIDAK LOLOS: "Banjir di Papua rusak sawah" → tidak ada kaitan dengan Magelang
+- Contoh TIDAK LOLOS: "Artikel opini tanpa data angka apapun"
+
+KRITERIA FENOMENA STATISTIK VALID (minimal salah satu):
+1. Ada DATA ANGKA spesifik (harga Rp, %, ton, kuintal, hektare, jumlah, dll)
+2. Ada PERBANDINGAN WAKTU (naik/turun dari bulan lalu, tahun lalu, triwulan sebelumnya)
+3. Ada PERNYATAAN RESMI dari pejabat/instansi tentang kondisi sektor tersebut
+
+Balas HANYA dengan JSON ini (tanpa markdown):
 {{
-  "skor_relevansi": <angka 1-10>,
-  "alasan_singkat": "<1 kalimat alasan skor>",
+  "skor_relevansi": <1-10>,
+  "alasan_singkat": "<1-2 kalimat mengapa skor ini>",
   "ada_data_angka": <true/false>,
   "ada_perbandingan_waktu": <true/false>,
   "relevan_dengan_kategori": <true/false>,
-  "relevan_dengan_wilayah": <true/false>,
-  "layak_ekstrak": <lihat aturan di bawah>
+  "berdampak_ke_magelang": <true jika fenomena berdampak/mencerminkan kondisi Magelang>,
+  "layak_ekstrak": <true jika skor>=6 DAN relevan_dengan_kategori=true DAN berdampak_ke_magelang=true>
 }}
 
 PANDUAN SKOR:
-9-10: Ada data angka + perbandingan waktu (y-on-y/q-to-q/bulan lalu) + sangat relevan kategori DAN wilayah.
-7-8 : Ada data angka + relevan, perbandingan waktu kurang eksplisit.
-5-6 : Ada angka tapi relevansi kategori/wilayah cukup lemah.
-1-4 : Opini tanpa data, tidak relevan kategori, atau wilayah sama sekali salah.
-
-{aturan_wilayah}"""
+9-10: Data angka + perbandingan waktu + langsung menyebut Magelang/sekitarnya
+7-8 : Data angka + relevan kategori + berdampak ke Magelang (meski tidak sebut langsung)
+5-6 : Ada angka tapi relevansi kategori lemah, ATAU relevan tapi minim data
+1-4 : Tidak ada data, tidak relevan kategori, atau sama sekali tidak ada kaitan Magelang"""
 
     try:
         teks_json, model_terpakai = _call_ai_screening(api_keys, prompt)
-
         teks_json = teks_json.strip().replace('```json', '').replace('```', '').strip()
-
         hasil = json.loads(teks_json)
         hasil["url"]             = url
         hasil["judul"]           = judul
         hasil["teks"]            = artikel.get("teks", "")
         hasil["_model_screener"] = model_terpakai
-        hasil["_level_ketat"]    = level_ketat  # Info debug: apakah pakai aturan ketat?
         return hasil
 
     except Exception as e:
@@ -197,8 +211,8 @@ PANDUAN SKOR:
             "url": url, "judul": judul, "teks": artikel.get("teks", ""),
             "skor_relevansi": 0, "alasan_singkat": f"Error AI: {str(e)[:40]}",
             "ada_data_angka": False, "ada_perbandingan_waktu": False,
-            "relevan_dengan_kategori": False, "relevan_dengan_wilayah": False,
-            "layak_ekstrak": False, "_level_ketat": False
+            "relevan_dengan_kategori": False, "berdampak_ke_magelang": False,
+            "layak_ekstrak": False
         }
 
 
@@ -208,27 +222,31 @@ def screening_batch(
     nama_kategori: str,
     wilayah: str,
     min_skor: int = 6,
-    jeda_detik: float = 1.5
+    jeda_detik: float = 1.0,
+    max_artikel: int = 15        # ← BATASI max 15 artikel per level agar hemat kuota
 ) -> tuple[list[dict], list[dict]]:
 
     if not list_artikel:
         return [], []
 
-    # ─── PERBAIKAN: Konsisten dengan logika di screening_satu_artikel ─────────
+    # Batasi jumlah artikel yang masuk ke AI
+    if len(list_artikel) > max_artikel:
+        print(f"   ⚠️ Terlalu banyak artikel ({len(list_artikel)}), dipotong ke {max_artikel} terbaik...")
+        list_artikel = list_artikel[:max_artikel]
+
     wilayah_lower = wilayah.lower()
     if "kota magelang" in wilayah_lower:
-        tampilan_wilayah = "KOTA MAGELANG"
+        tampilan = "KOTA MAGELANG"
     elif "kabupaten magelang" in wilayah_lower:
-        tampilan_wilayah = "KABUPATEN MAGELANG"
+        tampilan = "KABUPATEN MAGELANG"
     elif "kedu" in wilayah_lower:
-        tampilan_wilayah = "EKS-KARESIDENAN KEDU"
+        tampilan = "EKS-KARESIDENAN KEDU"
     elif "jawa tengah" in wilayah_lower or "jateng" in wilayah_lower:
-        tampilan_wilayah = "PROVINSI JAWA TENGAH"
+        tampilan = "PROVINSI JAWA TENGAH"
     else:
-        tampilan_wilayah = "NASIONAL / INDONESIA"
-    # ──────────────────────────────────────────────────────────────────────────
+        tampilan = "NASIONAL / INDONESIA"
 
-    print(f"\n   🤖 AI Screening {len(list_artikel)} artikel untuk '{nama_kategori}' di {tampilan_wilayah}...")
+    print(f"\n   🤖 AI Screening {len(list_artikel)} artikel untuk '{nama_kategori}' di {tampilan}...")
 
     lolos = []
     gagal = []
