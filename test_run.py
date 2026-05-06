@@ -11,6 +11,7 @@ KEYS = {
     "groq"    : os.environ.get("GROQ_API_KEY", ""),
     "gemini"  : os.environ.get("GEMINI_API_KEY", ""),
     "cerebras": os.environ.get("CEREBRAS_API_KEY", ""),
+    "mistral" : os.environ.get("MISTRAL_API_KEY", ""),
 }
 
 # Cek apakah file .env sudah ada isinya (Opsional)
@@ -22,7 +23,7 @@ LINK_BERITA = "https://radarmagelang.jawapos.com/magelang/687213386/hingga-perte
 def main():
     print("=" * 60)
     print("    SI-FENO — SISTEM EKSTRAKSI FENOMENA BERITA")
-    print("    Stack: 6 Model | 3 Provider | ~21.000 req/hari")
+    print("    Stack: 7 Model | 4 Provider | ~Anti-Limit") # <--- UPDATE TEKS
     print("=" * 60)
 
     print("\n[STEP 1] Scraping artikel...")
@@ -34,7 +35,7 @@ def main():
     print(f"  📄 Teks   : {len(hasil_scrape['teks'])} karakter")
     print(f"  🔧 Metode : {hasil_scrape.get('metode', 'N/A')}")
 
-    print("\n[STEP 2] Ekstraksi AI (auto-stacking 6 model)...")
+    print("\n[STEP 2] Ekstraksi AI (auto-stacking 7 model)...") # <--- UPDATE TEKS
     hasil_ai = ekstrak_fenomena_ai(KEYS, hasil_scrape)
 
     if hasil_ai["status"] == "error":
