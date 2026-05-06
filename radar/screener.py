@@ -11,7 +11,6 @@ import openai
 from groq import Groq
 from google import genai as google_genai
 from google.genai import types as google_types
-from mistralai import Mistral  # pip install mistralai
 
 # ─── KONFIGURASI MODEL STACK ──────────────────────────────────────────────────
 # Diselaraskan dengan MODEL_STACK di ai_engine.py
@@ -113,8 +112,11 @@ def _call_ai_screening(api_keys: dict, prompt: str) -> tuple[str, str]:
                 return teks, cfg["nama"]
 
             elif provider == "mistral":
-                client = Mistral(api_key=api_key)
-                resp = client.chat.complete(
+                client = openai.OpenAI(
+                    api_key=api_key,
+                    base_url="https://api.mistral.ai/v1"
+                )
+                resp = client.chat.completions.create(
                     model=model_id,
                     messages=[
                         {"role": "system", "content": "Validator berita BPS. Balas HANYA JSON murni tanpa markdown."},
