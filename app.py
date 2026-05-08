@@ -230,7 +230,7 @@ for key, default in [
     ("hasil_ekstraksi", None),
     ("ekstraksi_url_aktif", ""),
     ("tab_aktif", 0),
-    ("json_final_siap", None),   # ← TAMBAH BARIS INI
+    ("json_final_siap", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
