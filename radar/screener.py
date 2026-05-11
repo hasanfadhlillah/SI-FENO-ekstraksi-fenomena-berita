@@ -13,145 +13,162 @@ from google import genai as google_genai
 from google.genai import types as google_types
 
 # ─── KONFIGURASI MODEL STACK ──────────────────────────────────────────────────
-# Diselaraskan dengan MODEL_STACK di ai_engine.py
 SCREENER_STACK = [
     {
-        "nama": "Groq — Llama 3.3 70B",
-        "provider": "groq",
-        "model_id": "llama-3.3-70b-versatile"
+        "nama"      : "Groq — Llama 3.3 70B",
+        "provider"  : "groq",
+        "model_id"  : "llama-3.3-70b-versatile"
     },
     {
-        "nama": "Cerebras — GLM 4.7",
-        "provider": "cerebras",
-        "model_id": "zai-glm-4.7"
+        "nama"      : "Google — Gemini 2.5 Flash",
+        "provider"  : "gemini",
+        "model_id"  : "gemini-2.5-flash"
     },
     {
-        "nama": "Google — Gemini 2.5 Flash",
-        "provider": "gemini",
-        "model_id": "gemini-2.5-flash"
+        "nama"      : "Mistral — Mistral Small",
+        "provider"  : "mistral",
+        "model_id"  : "mistral-small-latest"      
     },
     {
-        "nama": "Mistral — Mistral Small",
-        "provider": "mistral",
-        "model_id": "mistral-small-latest"      # ← BARU: ~1B token/bulan gratis
+        "nama"      : "Groq — Gemma 2 9B",
+        "provider"  : "groq",
+        "model_id"  : "gemma2-9b-it"
     },
     {
-        "nama": "Groq — Llama 3.1 8B Instant",
-        "provider": "groq",
-        "model_id": "llama-3.1-8b-instant"
+        "nama"      : "Google — Gemini 2.5 Flash-Lite",
+        "provider"  : "gemini",
+        "model_id"  : "gemini-2.5-flash-lite"
+    },
+    {
+        "nama"      : "Cerebras — Llama 3.1 8B",
+        "provider"  : "cerebras",
+        "model_id"  : "llama3.1-8b"
+    },
+    {
+        "nama"      : "Groq — Llama 3.1 8B Instant",
+        "provider"  : "groq",
+        "model_id"  : "llama-3.1-8b-instant"
     }
 ]
 
-
 def _call_ai_screening(api_keys: dict, prompt: str) -> tuple[str, str]:
     """
-    Menjalankan request AI dengan fallback stack.
+    Menjalankan request AI dengan fallback stack dan API Key Pooling.
     """
+    import random
+    
     for cfg in SCREENER_STACK:
         provider = cfg["provider"]
         model_id = cfg["model_id"]
-        api_key  = api_keys.get(provider, "").strip()
+        api_key_raw = api_keys.get(provider, "")
 
-        if not api_key:
+        # Pecah gabungan API Key berdasarkan koma menjadi sebuah List (Pool)
+        pool_keys = [k.strip() for k in api_key_raw.split(",") if k.strip()]
+
+        if not pool_keys:
             continue
+            
+        # Acak urutan kunci agar beban terbagi rata
+        random.shuffle(pool_keys)
 
-        try:
-            if provider == "groq":
-                client = Groq(api_key=api_key)
-                resp = client.chat.completions.create(
-                    model=model_id,
-                    messages=[
-                        {"role": "system", "content": "Validator berita BPS. Balas HANYA JSON murni tanpa markdown."},
-                        {"role": "user",   "content": prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=400,
-                    response_format={"type": "json_object"}
-                )
-                teks = resp.choices[0].message.content
-                if teks is None or teks.strip() == "":
-                    raise ValueError("Groq mengembalikan respons kosong")
-                return teks, cfg["nama"]
-
-            elif provider == "gemini":
-                client = google_genai.Client(api_key=api_key)
-                gabung = f"SYSTEM: Validator berita BPS. Balas HANYA JSON murni.\n\nUSER: {prompt}"
-                resp = client.models.generate_content(
-                    model=model_id,
-                    contents=gabung,
-                    config=google_types.GenerateContentConfig(
+        for idx, api_key in enumerate(pool_keys):
+            try:
+                if provider == "groq":
+                    client = Groq(api_key=api_key)
+                    resp = client.chat.completions.create(
+                        model=model_id,
+                        messages=[
+                            {"role": "system", "content": "Validator berita BPS. Balas HANYA JSON murni tanpa markdown."},
+                            {"role": "user",   "content": prompt}
+                        ],
                         temperature=0.1,
-                        max_output_tokens=400,
-                        response_mime_type="application/json",
-                        thinking_config=google_types.ThinkingConfig(thinking_budget=0)
+                        max_tokens=400,
+                        response_format={"type": "json_object"}
                     )
-                )
-                teks = resp.text if resp.text is not None else ""
-                if teks.strip() == "":
-                    raise ValueError("Gemini mengembalikan respons kosong")
-                return teks, cfg["nama"]
+                    teks = resp.choices[0].message.content
+                    if teks is None or teks.strip() == "":
+                        raise ValueError("Groq mengembalikan respons kosong")
+                    return teks, cfg["nama"]
+    
+                elif provider == "gemini":
+                    client = google_genai.Client(api_key=api_key)
+                    gabung = f"SYSTEM: Validator berita BPS. Balas HANYA JSON murni.\n\nUSER: {prompt}"
+                    resp = client.models.generate_content(
+                        model=model_id,
+                        contents=gabung,
+                        config=google_types.GenerateContentConfig(
+                            temperature=0.1,
+                            max_output_tokens=400,
+                            response_mime_type="application/json",
+                            thinking_config=google_types.ThinkingConfig(thinking_budget=0)
+                        )
+                    )
+                    teks = resp.text if resp.text is not None else ""
+                    if teks.strip() == "":
+                        raise ValueError("Gemini mengembalikan respons kosong")
+                    return teks, cfg["nama"]
+    
+                elif provider == "cerebras":
+                    client = openai.OpenAI(
+                        api_key=api_key,
+                        base_url="https://api.cerebras.ai/v1"
+                    )
+                    resp = client.chat.completions.create(
+                        model=model_id,
+                        messages=[
+                            {"role": "system", "content": "Validator berita BPS. Balas HANYA JSON murni tanpa markdown."},
+                            {"role": "user",   "content": prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=400,
+                        response_format={"type": "json_object"}
+                    )
+                    teks = resp.choices[0].message.content
+                    if teks is None or teks.strip() == "":
+                        raise ValueError("Cerebras mengembalikan respons kosong")
+                    return teks, cfg["nama"]
+    
+                elif provider == "mistral":
+                    client = openai.OpenAI(
+                        api_key=api_key,
+                        base_url="https://api.mistral.ai/v1"
+                    )
+                    resp = client.chat.completions.create(
+                        model=model_id,
+                        messages=[
+                            {"role": "system", "content": "Validator berita BPS. Balas HANYA JSON murni tanpa markdown."},
+                            {"role": "user",   "content": prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=400,
+                        response_format={"type": "json_object"}
+                    )
+                    teks = resp.choices[0].message.content
+                    if teks is None or teks.strip() == "":
+                        raise ValueError("Mistral mengembalikan respons kosong")
+                    return teks, cfg["nama"]
+    
+            except Exception as e:
+                err = str(e).lower()
+                is_limit = any(k in err for k in [
+                    "429", "rate limit", "quota", "exhausted",
+                    "too many requests", "resource_exhausted"
+                ])
+                if is_limit:
+                    print(f"         ⚠️ {cfg['nama']} [Kunci {idx+1}] Limit! Coba kunci cadangan...")
+                    time.sleep(1)
+                    continue # COBA KUNCI SELANJUTNYA DI PROVIDER YANG SAMA!
+                elif "503" in err or "unavailable" in err:
+                    print(f"         ⚠️ {cfg['nama']} Server sibuk (503). Pindah ke model berikutnya...")
+                    break # Lompat ke model AI berikutnya
+                elif "404" in err or "not found" in err or "does not exist" in err:
+                    print(f"         ⚠️ {cfg['nama']} Model 404! Pindah ke model berikutnya...")
+                    break # Lompat ke model AI berikutnya
+                else:
+                    print(f"         ⚠️ {cfg['nama']} Error: {str(e)[:80]}")
+                    break # Lompat ke model AI berikutnya
 
-            elif provider == "cerebras":
-                client = openai.OpenAI(
-                    api_key=api_key,
-                    base_url="https://api.cerebras.ai/v1"
-                )
-                resp = client.chat.completions.create(
-                    model=model_id,
-                    messages=[
-                        {"role": "system", "content": "Validator berita BPS. Balas HANYA JSON murni tanpa markdown."},
-                        {"role": "user",   "content": prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=400,
-                    response_format={"type": "json_object"}
-                )
-                teks = resp.choices[0].message.content
-                if teks is None or teks.strip() == "":
-                    raise ValueError("Cerebras mengembalikan respons kosong")
-                return teks, cfg["nama"]
-
-            elif provider == "mistral":
-                client = openai.OpenAI(
-                    api_key=api_key,
-                    base_url="https://api.mistral.ai/v1"
-                )
-                resp = client.chat.completions.create(
-                    model=model_id,
-                    messages=[
-                        {"role": "system", "content": "Validator berita BPS. Balas HANYA JSON murni tanpa markdown."},
-                        {"role": "user",   "content": prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=400,
-                    response_format={"type": "json_object"}
-                )
-                teks = resp.choices[0].message.content
-                if teks is None or teks.strip() == "":
-                    raise ValueError("Mistral mengembalikan respons kosong")
-                return teks, cfg["nama"]
-
-        except Exception as e:
-            err = str(e).lower()
-            is_limit = any(k in err for k in [
-                "429", "rate limit", "quota", "exhausted",
-                "too many requests", "resource_exhausted"
-            ])
-            if is_limit:
-                print(f"         ⚠️ {cfg['nama']} Limit Kuota! Pindah ke model berikutnya...")
-                time.sleep(2)
-                continue
-            elif "503" in err or "unavailable" in err:
-                print(f"         ⚠️ {cfg['nama']} Server sibuk (503). Pindah ke model berikutnya...")
-                continue
-            elif "404" in err or "not found" in err or "does not exist" in err:
-                print(f"         ⚠️ {cfg['nama']} Model 404! Pindah ke model berikutnya...")
-                continue
-            else:
-                print(f"         ⚠️ {cfg['nama']} Error: {str(e)[:80]}")
-                continue
-
-    raise Exception("Semua model di Screener Stack error atau habis kuota.")
+    raise Exception("Semua model dan puluhan API Key error atau habis kuota. Coba lagi besok.")
 
 
 def screening_satu_artikel(api_keys: dict, artikel: dict, nama_kategori: str, wilayah: str) -> dict:

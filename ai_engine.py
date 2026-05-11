@@ -15,12 +15,6 @@ MODEL_STACK = [
         "max_chars" : 8000,
     },
     {
-        "nama"      : "Cerebras — GLM 4.7",
-        "provider"  : "cerebras",
-        "model_id"  : "zai-glm-4.7",
-        "max_chars" : 400000,
-    },
-    {
         "nama"      : "Google — Gemini 2.5 Flash",
         "provider"  : "gemini",
         "model_id"  : "gemini-2.5-flash",          
@@ -33,22 +27,28 @@ MODEL_STACK = [
         "max_chars" : 8000,
     },
     {
+        "nama"      : "Groq — Gemma 2 9B",
+        "provider"  : "groq",
+        "model_id"  : "gemma2-9b-it",
+        "max_chars" : 4000,
+    },
+    {
         "nama"      : "Google — Gemini 2.5 Flash-Lite",
         "provider"  : "gemini",
         "model_id"  : "gemini-2.5-flash-lite",     
         "max_chars" : 10000,
     },
     {
+        "nama"      : "Cerebras — Llama 3.1 8B",
+        "provider"  : "cerebras",
+        "model_id"  : "llama3.1-8b",
+        "max_chars" : 8000,
+    },
+    {
         "nama"      : "Groq — Llama 3.1 8B Instant",
         "provider"  : "groq",
         "model_id"  : "llama-3.1-8b-instant",
         "max_chars" : 8000,
-    },
-    {
-        "nama"      : "Groq — Gemma 2 9B",
-        "provider"  : "groq",
-        "model_id"  : "gemma2-9b-it",
-        "max_chars" : 4000,
     },
 ]
 
@@ -170,71 +170,70 @@ def _call_mistral(api_key: str, model_id: str, prompt: str) -> str:
  
 # ─── Fungsi Utama ───────────────────────────────────────────────────────────────
 def ekstrak_fenomena_ai(keys: dict, data_artikel: dict) -> dict:
-    """
-    Stacking 7 model dari 4 provider dengan auto-fallback.
+    import random
     
-    keys = {
-        "groq"     : "gsk_...",
-        "gemini"   : "AIza...",
-        "cerebras" : "csk_...",
-        "mistral"  : "..."       ← BARU
-    }
-    """
     for cfg in MODEL_STACK:
         provider = cfg["provider"]
-        api_key  = keys.get(provider, "").strip()
+        api_key_raw = keys.get(provider, "")
+        
+        # Pecah gabungan API Key berdasarkan koma menjadi sebuah List (Pool)
+        pool_keys = [k.strip() for k in api_key_raw.split(",") if k.strip()]
  
-        if not api_key or api_key.startswith("GANTI"):
-            print(f"   -> [Skip] {cfg['nama']}: API key belum diisi.")
+        if not pool_keys:
+            print(f"   -> [Skip] {cfg['nama']}: API key kosong.")
             continue
  
-        print(f"\n   -> [Mencoba] {cfg['nama']}...")
+        print(f"\n   -> [Mencoba] {cfg['nama']} (Ada {len(pool_keys)} Kunci Amunisi)...")
         prompt = _buat_prompt(data_artikel, cfg["max_chars"])
+        
+        # Acak urutan kunci agar beban terbagi rata di semua akun (Load Balancing)
+        random.shuffle(pool_keys)
  
-        try:
-            if provider == "groq":
-                teks_json = _call_groq(api_key, cfg["model_id"], prompt)
-            elif provider == "gemini":
-                teks_json = _call_gemini(api_key, cfg["model_id"], prompt)
-            elif provider == "cerebras":
-                teks_json = _call_cerebras(api_key, cfg["model_id"], prompt)
-            elif provider == "mistral":
-                teks_json = _call_mistral(api_key, cfg["model_id"], prompt)
-            else:
-                continue
- 
-            # Bersihkan sisa markdown jika ada
-            teks_bersih = teks_json.strip().replace('```json', '').replace('```', '').strip()
- 
-            hasil = json.loads(teks_bersih)
-            hasil["_model_digunakan"] = cfg["nama"]
-            print(f"   -> [✅ Sukses] {cfg['nama']}")
-            return {"status": "sukses", "data": hasil}
- 
-        except json.JSONDecodeError as e:
-            print(f"   -> [Error JSON] {cfg['nama']}: {e}")
-            continue
- 
-        except Exception as e:
-            err = str(e)
-            is_rate_limit = any(k in err.lower() for k in [
-                "429", "rate_limit", "rate limit", "quota", "resource_exhausted",
-                "too many requests", "token", "rpm", "rpd", "exhausted"
-            ])
-            is_not_found = any(k in err.lower() for k in [
-                "404", "not found", "does not exist", "model_not_found"
-            ])
- 
-            if is_rate_limit:
-                print(f"   -> [⚠️  Rate Limit] {cfg['nama']} → lanjut model berikutnya...")
-                time.sleep(1)
-            elif is_not_found:
-                print(f"   -> [❌ Model 404] {cfg['nama']} → model tidak ditemukan, lewati.")
-            else:
-                print(f"   -> [Error] {cfg['nama']}: {err[:120]}")
-            continue
+        # Coba satu per satu kunci API di dalam pool
+        for idx, api_key in enumerate(pool_keys):
+            try:
+                if provider == "groq":
+                    teks_json = _call_groq(api_key, cfg["model_id"], prompt)
+                elif provider == "gemini":
+                    teks_json = _call_gemini(api_key, cfg["model_id"], prompt)
+                elif provider == "cerebras":
+                    teks_json = _call_cerebras(api_key, cfg["model_id"], prompt)
+                elif provider == "mistral":
+                    teks_json = _call_mistral(api_key, cfg["model_id"], prompt)
+                else:
+                    break
+     
+                # Bersihkan sisa markdown jika ada
+                teks_bersih = teks_json.strip().replace('```json', '').replace('```', '').strip()
+     
+                hasil = json.loads(teks_bersih)
+                hasil["_model_digunakan"] = cfg["nama"]
+                print(f"   -> [✅ Sukses] {cfg['nama']} (Memakai kunci ke-{idx+1})")
+                return {"status": "sukses", "data": hasil}
+     
+            except json.JSONDecodeError as e:
+                print(f"   -> [Error JSON] {cfg['nama']}: {e}")
+                break # Ini error dari output AI, bukan limit. Lompat ke model berikutnya.
+     
+            except Exception as e:
+                err = str(e).lower()
+                is_rate_limit = any(k in err for k in [
+                    "429", "rate limit", "quota", "exhausted", "too many requests"
+                ])
+                is_not_found = "404" in err or "not found" in err
+     
+                if is_rate_limit:
+                    print(f"   -> [⚠️ Limit] Kunci ke-{idx+1} habis! Coba Kunci Cadangan {provider}...")
+                    time.sleep(1)
+                    continue # COBA KUNCI SELANJUTNYA!
+                elif is_not_found:
+                    print(f"   -> [❌ Model 404] {cfg['nama']} → model tidak ditemukan, lewati.")
+                    break # Lompat ke model AI berikutnya
+                else:
+                    print(f"   -> [Error] {cfg['nama']}: {err[:120]}")
+                    break # Lompat ke model AI berikutnya
  
     return {
         "status": "error",
-        "pesan" : "Semua model habis quota atau error. Coba lagi nanti!"
+        "pesan" : "Seluruh model dan seluruh 25 API Key error/limit. Coba lagi nanti!"
     }
