@@ -180,9 +180,10 @@ with st.sidebar:
     
     st.markdown("""
     <div style="margin-top: -10px; margin-bottom: 20px;">
-        <h1 style="font-size: 2.8rem; font-weight: 900; margin-bottom: 0px; line-height: 1.1; color: #1e293b;">📡 SI-FENO</h1>
-        <div style="font-size: 1.15rem; font-weight: 800; color: #4a6cf7; margin-top: 5px;">Sistem Intelijen Fenomena & Observasi</div>
-        <div style="font-size: 0.95rem; font-weight: 600; color: #64748b; margin-top: 4px;">BPS Kota Magelang</div>
+        <h1 style="font-size: 2.8rem; font-weight: 900; margin-bottom: 0px; line-height: 1.1;">📡 SI-PENA</h1>
+        <div style="font-size: 1.05rem; font-weight: 800; color: #4a6cf7; margin-top: 5px;">Sistem Pencari Berita & Ekstraksi Fenomena</div>
+        <div style="font-size: 0.85rem; font-style: italic; color: #828282; margin-top: 4px;">"Menulis ulang fakta dari ribuan narasi berita"</div>
+        <div style="font-size: 0.95rem; font-weight: 600; margin-top: 8px;">BPS Kota Magelang</div>
     </div>
     <hr style="margin-top: 5px; margin-bottom: 15px;">
     """, unsafe_allow_html=True)
