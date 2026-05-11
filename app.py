@@ -5,6 +5,7 @@ import os
 import time
 import json
 import io
+import altair as alt # Tambahan untuk Visualisasi Keren
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from openpyxl import Workbook
@@ -23,7 +24,7 @@ from ai_engine import ekstrak_fenomena_ai
 
 # ─── KONFIGURASI HALAMAN ───────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="SI-FENO | BPS Kota Magelang",
+    page_title="SI-PENA | BPS Kota Magelang",
     page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -61,7 +62,6 @@ inisialisasi_database()
 load_dotenv()
 
 # ─── MENGAMBIL API KEYS (MENDUKUNG FORMAT JAMAK / POOLING) ───────────────────
-# Prioritaskan mengambil yang ada huruf "S" nya (cth: GROQ_API_KEYS)
 KEYS = {
     "groq"    : os.environ.get("GROQ_API_KEYS", os.environ.get("GROQ_API_KEY", "")),
     "gemini"  : os.environ.get("GEMINI_API_KEYS", os.environ.get("GEMINI_API_KEY", "")),
@@ -69,7 +69,6 @@ KEYS = {
     "mistral" : os.environ.get("MISTRAL_API_KEYS", os.environ.get("MISTRAL_API_KEY", "")),
 }
 
-# Fungsi kecil untuk menghitung ada berapa kunci di dalam 1 string yang dipisah koma
 def _hitung_kunci(raw_keys: str) -> int:
     return len([k for k in raw_keys.split(",") if k.strip()])
 
@@ -220,11 +219,12 @@ with st.sidebar:
     st.markdown("---")
     st.caption("v1.0 | Made with ❤️ by BPS Kota Magelang")
 
-# ─── MAIN TABS ────────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs([
+# ─── MAIN TABS (DITAMBAH TAB 4) ───────────────────────────────────────────────
+tab1, tab2, tab3, tab4 = st.tabs([
     "📡 RADAR BERITA",
     "📝 EKSTRAKTOR FENOMENA",
-    "📊 HISTORY BERITA"
+    "🗄️ HISTORY BERITA",
+    "📈 DASHBOARD ANALISIS"
 ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -578,17 +578,17 @@ with tab2:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3: HISTORY
+# TAB 3: HISTORY BERITA
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab3:
-    with st.expander("📖 Panduan Penggunaan Tab Riwayat", expanded=False):
+    with st.expander("📖 Panduan Penggunaan Tab History", expanded=False):
         st.markdown("""
-        **Fungsi Tab Ini:** Tempat Anda mengekspor seluruh rekapan aktivitas Radar dan AI dalam 1 database besar.
-        1. **Analisis Visual:** Anda bisa melihat kategori PDRB apa yang paling sering muncul di media (tren ekonomi).
-        2. **Export Excel Massal:** Jika atasan meminta rekap mingguan, filter tabel di bawah, lalu klik 'Download Excel'.
+        **Fungsi Tab Ini:** Tempat Anda melihat tabel data mentah dan mengekspor seluruh rekapan aktivitas Radar ke Excel.
+        1. **Filter Data:** Anda bisa memfilter berdasarkan status (contoh: hanya yang sudah 'diekstrak').
+        2. **Export Excel Massal:** Jika atasan meminta rekap, filter tabel di bawah, lalu klik 'Download EXCEL'.
         """)
 
-    st.markdown("## 📊 History Berita")
+    st.markdown("## 🗄️ Tabel Data History Lengkap")
 
     from radar.database import get_connection
     try:
@@ -613,17 +613,10 @@ with tab3:
     if df_riwayat.empty:
         st.info("Belum ada riwayat artikel di database SQLite. Jalankan radar terlebih dahulu.")
     else:
-        st.markdown("### 📈 Tren Berita per Kategori")
-        distribusi = df_riwayat['Kategori PDRB'].value_counts()
-        st.bar_chart(distribusi, use_container_width=True, color="#4a6cf7")
-
-        st.markdown("---")
-        st.markdown("### 🗄️ Tabel Data Lengkap")
-        
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
             filter_status = st.multiselect(
-                "Filter Status (Ditemukan = Di antrean):",
+                "Filter Status:",
                 ["ditemukan", "diekstrak", "tidak_lolos", "ditolak_user"],
                 default=["ditemukan", "diekstrak"]
             )
@@ -673,3 +666,84 @@ with tab3:
             st.download_button("⬇️ Download JSON", data=json_exp.encode("utf-8"),
                                file_name=f"Rekap_Radar_{datetime.now().strftime('%Y%m%d')}.json",
                                mime="application/json", use_container_width=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4: DASHBOARD ANALISIS (BARU)
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab4:
+    st.markdown("## 📈 Dashboard Analisis Fenomena")
+    st.caption("Visualisasi interaktif untuk memantau tren berita ekonomi dan performa mesin SI-PENA.")
+    
+    try:
+        from radar.database import get_connection
+        conn = get_connection()
+        df_dash = pd.read_sql_query("SELECT * FROM riwayat_artikel", conn)
+        conn.close()
+    except Exception:
+        df_dash = pd.DataFrame()
+
+    if df_dash.empty:
+        st.info("ℹ️ Belum ada data untuk divisualisasikan. Silakan jalankan Radar terlebih dahulu.")
+    else:
+        # Konversi format tanggal untuk sumbu X grafik
+        df_dash['Tanggal Ditemukan'] = pd.to_datetime(df_dash['tanggal_ditemukan']).dt.date
+        
+        # --- Baris 1: Panel Metrik Eksekutif ---
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        col_m1.metric("📰 Total Berita Tersimpan", len(df_dash), help="Total seluruh berita yang pernah ditangkap Radar.")
+        col_m2.metric("🏷️ Kategori Terdampak", df_dash['kategori_pdrb'].nunique(), help="Jumlah sektor ekonomi (PDRB) yang memiliki minimal 1 berita.")
+        col_m3.metric("🧠 Rata-rata Skor AI", round(df_dash['skor_relevansi'].mean(), 2), help="Skor rata-rata kualitas berita yang disaring AI (Skala 1-10).")
+        col_m4.metric("✅ Berita Diekstrak", len(df_dash[df_dash['status'] == 'diekstrak']), help="Jumlah berita yang sudah selesai diolah di Meja Ekstraktor (Tab 2).")
+        
+        st.markdown("---")
+        
+        # --- Baris 2: Grafik Tren Harian & Donut Chart Status ---
+        col_c1, col_c2 = st.columns([6, 4])
+        
+        with col_c1:
+            st.markdown("**📉 Tren Penemuan Berita Harian**")
+            st.caption("Melihat lonjakan (spike) kemunculan berita pada hari-hari tertentu.")
+            tren_harian = df_dash.groupby('Tanggal Ditemukan').size().reset_index(name='Jumlah Berita')
+            
+            # Line Chart menggunakan Altair
+            chart_tren = alt.Chart(tren_harian).mark_line(point=True, color='#4a6cf7', strokeWidth=3).encode(
+                x=alt.X('Tanggal Ditemukan:T', title='Tanggal'),
+                y=alt.Y('Jumlah Berita:Q', title='Jumlah Berita'),
+                tooltip=['Tanggal Ditemukan', 'Jumlah Berita']
+            ).interactive().properties(height=300)
+            
+            st.altair_chart(chart_tren, use_container_width=True)
+        
+        with col_c2:
+            st.markdown("**📊 Status Antrean Berita**")
+            st.caption("Proporsi berita yang 'ngantre' vs yang sudah diselesaikan.")
+            status_dist = df_dash['status'].value_counts().reset_index()
+            status_dist.columns = ['Status', 'Jumlah']
+            
+            # Donut Chart menggunakan Altair
+            chart_status = alt.Chart(status_dist).mark_arc(innerRadius=65).encode(
+                theta=alt.Theta(field="Jumlah", type="quantitative"),
+                color=alt.Color(field="Status", type="nominal", scale=alt.Scale(scheme='category10')),
+                tooltip=['Status', 'Jumlah']
+            ).properties(height=300)
+            
+            st.altair_chart(chart_status, use_container_width=True)
+
+        st.markdown("---")
+        
+        # --- Baris 3: Horizontal Bar Chart Top Kategori ---
+        st.markdown("**🏆 Top 10 Kategori PDRB Paling Banyak Diberitakan**")
+        st.caption("Sektor ekonomi mana yang sedang menjadi sorotan / tren terpanas di media.")
+        
+        top_kat = df_dash['kategori_pdrb'].value_counts().head(10).reset_index()
+        top_kat.columns = ['Kategori', 'Jumlah Berita']
+        
+        # Horizontal Bar Chart menggunakan Altair
+        chart_bar = alt.Chart(top_kat).mark_bar(color='#28a745', cornerRadiusEnd=4).encode(
+            x=alt.X('Jumlah Berita:Q', title='Total Berita Ditemukan'),
+            y=alt.Y('Kategori:N', sort='-x', title=''),
+            tooltip=['Kategori', 'Jumlah Berita']
+        ).properties(height=350)
+        
+        st.altair_chart(chart_bar, use_container_width=True)
