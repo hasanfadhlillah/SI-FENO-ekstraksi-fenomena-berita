@@ -214,9 +214,9 @@ with st.sidebar:
 
 # ─── MAIN TABS ────────────────────────────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs([
-    "📡 RADAR PDRB",
+    "📡 RADAR BERITA",
     "📝 EKSTRAKTOR FENOMENA",
-    "📊 RIWAYAT & EKSPOR"
+    "📊 HISTORY & EKSPOR"
 ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -570,7 +570,7 @@ with tab2:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3: RIWAYAT & EKSPOR
+# TAB 3: HISTORY & EKSPOR
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab3:
     with st.expander("📖 Panduan Penggunaan Tab Riwayat", expanded=False):
