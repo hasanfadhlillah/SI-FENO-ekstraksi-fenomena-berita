@@ -156,7 +156,7 @@ def scan_kategori(
 
     # Gerbang 1: Query Expansion
     print(f"\n[1/6] 🔍 Menerjemahkan kategori ke keyword...")
-    keywords = dapatkan_keywords(nama_kategori, GROQ_KEY)
+    keywords = dapatkan_keywords(nama_kategori, GROQ_KEYS)
 
     semua_artikel_valid = []
     level_sekarang = 0
